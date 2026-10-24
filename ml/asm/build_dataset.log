@@ -1,0 +1,20 @@
+{
+  "records": 13065,
+  "records_broken": 0,
+  "records_no_c": 0,
+  "samples": 24852,
+  "skipped_dup": 908,
+  "skipped_short": 0,
+  "skipped_not_compiled": 370,
+  "train": 24377,
+  "val": 475,
+  "by_opt": {
+    "O0": 12483,
+    "O2": 12369
+  },
+  "by_model": {
+    "beam:cloud": 12887,
+    "deepseek-v4.1-flash:cloud": 11965
+  }
+}
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/train.jsonl (24377), val.jsonl (475)

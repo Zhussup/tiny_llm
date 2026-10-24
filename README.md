@@ -19,29 +19,45 @@
 
 ---
 
-> **Status (2026-10-23):** the pipeline works end-to-end and the second full
-> LoRA run is evaluated. On a 118-pair validation split the adapter compiles
-> **70.3%** of the answers; **27.1%** of them reproduce the reference behavior
-> when each program is tested on its own probes, **22.9%** when every program
-> is tested on one fixed list of ten inputs. On the 26-pair subset shared with
-> the earlier runs it reaches **84.6%** and **23.1%**, against 73.1% / 0% for
-> the previous adapter and 26.9% / 0% for the base model. A do-nothing program
-> scores 5.1% on the fixed list and 0% on per-program probes, so the metric no
-> longer pays for empty answers. Numbers are reported as they are.
+> **Status (2026-10-24):** the input format now has a disassembly twin, and two
+> adapters are training on it — listings only and disassembly only, on the same
+> 3,876 programs and the same split. Results follow when the runs finish.
+>
+> **Previous result (2026-10-23):** on a 118-pair validation split the adapter
+> compiles **70.3%** of the answers; **27.1%** of them reproduce the reference
+> behavior when each program is tested on its own probes, **22.9%** when every
+> program is tested on one fixed list of ten inputs. On the 26-pair subset
+> shared with the earlier runs it reaches **84.6%** and **23.1%**, against
+> 73.1% / 0% for the previous adapter and 26.9% / 0% for the base model. A
+> do-nothing program scores 5.1% on the fixed list and 0% on per-program
+> probes, so the metric no longer pays for empty answers. Numbers are reported
+> as they are.
 >
 > **Finding — the model is trained on a format it will not meet.** The input
-> is a `gcc -S` listing: symbolic labels, no addresses, no instruction bytes.
+> was a `gcc -S` listing: symbolic labels, no addresses, no instruction bytes.
 > In practice a company has a binary and nothing else, and assembly comes out
 > of a disassembler (`objdump -d`), which prints virtual addresses, hex bytes,
-> `call 0x401030 <printf@plt>` and RIP-relative operands. A model trained only
-> on listings would see a different rendering of the same code. Every record
-> keeps its `c_source`, so the disassembly corpus is a re-derivation of the
-> same programs — not a new collection.
+> `call 401030 <printf@plt>` and RIP-relative operands. Every record keeps its
+> `c_source`, so the second corpus is a re-derivation of the same programs, not
+> a new collection: `build_disasm.py` compiles the stored C, links it, and
+> keeps only the functions the program itself defines.
 >
-> **Next:** rotate the training and evaluation input format to disassembly and
-> compare three adapters on identical programs — listings only, disassembly
-> only, and a mix. The dataset now records the teacher behind every pair
-> (`model`), so runs can be balanced or filtered by teacher.
+> **Finding — the disassembly costs twice the tokens.** The hex-byte column and
+> the addresses tokenize poorly: the median pair is 4,475 tokens against 2,259
+> for the listing, and 13.8% of the disassembly pairs fit 2,048 tokens against
+> 44.7% of the listings. Comparing adapters at that limit would mix format with
+> volume, so `build_subset.py` keeps only the programs whose every sample fits
+> one budget in both forms and writes one file per view: at 4,096 tokens that
+> is 3,876 programs, 7,680 rows per view and 172 validation pairs.
+>
+> **Also — the disassembly is lossy.** Names, formatting and `puts` versus
+> `printf` vanish at compile time, so 1,530 of the 25,758 disassembly pairs
+> collapse onto an input already present with a different — equally valid — C.
+> The first target is kept, as `build_dataset.py` does; the count is recorded
+> in `stats_disasm.json` as `skipped_dup_conflict`.
+>
+> **Next:** finish the two runs, evaluate each adapter on its own format and on
+> the other one, then add the mixed adapter if the gap turns out to be large.
 
 ## The idea
 
@@ -74,7 +90,11 @@ flowchart LR
   GCC --> L["AT&T listing + reference C"]
   L --> B["build_dataset.py<br/>strip leaks, dedupe, hash split"]
   B --> D["train.jsonl / val.jsonl"]
-  D --> S["LoRA SFT, Qwen3-0.6B"]
+  L --> X["build_disasm.py<br/>compile, link, objdump -d"]
+  X --> DX["train_disasm.jsonl / val_disasm.jsonl"]
+  D --> SUB["build_subset.py<br/>programs that fit 4,096 tokens in both views"]
+  DX --> SUB
+  SUB --> S["LoRA SFT, Qwen3-0.6B"]
   S --> M["reconstructed C"]
   R["reference C"] --> DT["difftest.py"]
   R --> C["gen_cases.py<br/>probes per program"]
@@ -186,15 +206,16 @@ averages: 0.229, 0.103, 0.057).
 
 | Metric | Value |
 |--------|-------|
-| Programs collected | **6,834** and counting (collector running since 2026-10-21) |
-| Programs in the last dataset build | 6,834 |
-| Pairs (`-O0` + `-O2`) in that build | **12,927** (`-O0` 6,487, `-O2` 6,440) |
-| Train / validation pairs | **12,665 / 262**, split by hashed source id |
-| Pairs by teacher | `beam:cloud` 12,887, `deepseek-v4.1-flash:cloud` 40 |
+| Programs collected | **13,065** (collector stopped 2026-10-24) |
+| Programs in the last dataset build | 13,065 |
+| Pairs (`-O0` + `-O2`) in that build | **24,852** listings (`-O0` 12,483, `-O2` 12,369); **25,758** disassemblies (12,879 each) |
+| Train / validation pairs | **24,377 / 475** listings; **23,647 / 463** disassemblies, split by hashed source id |
+| Pairs by teacher | `beam:cloud` 12,887, `deepseek-v4.1-flash:cloud` 11,965 |
 | Prompt space | 406 tasks x 32 wording variations = **12,992** |
-| Duplicates removed / compile failures excluded | 419 / 322 |
+| Duplicates removed / compile failures excluded | 908 and 370 for listings; 1,648 and 372 for disassemblies |
 | Programs with a real probe list (`gen_cases.py`) | **4,459 of 4,740** in the previous build; not regenerated for this one |
 | Pairs in the last training run | 2,579 — the other 2,770 of that older split exceeded 2,048 tokens |
+| Pairs in the format comparison (`build_subset.py`) | **7,680 per view** (3,876 programs, every sample within 4,096 tokens) |
 | Validation snapshot behind every number here | the older **118-pair** split, kept as `ml/asm/dataset/val118.jsonl` |
 
 Every pair carries two views of the same program: `-O0` preserves the source
@@ -204,8 +225,9 @@ side.
 
 The evaluation numbers in this README come from the 118-pair split that existed
 before the last rebuild, kept as a snapshot so old and new runs stay
-comparable. The current build has 262 validation pairs; nothing has been
-trained on them yet.
+comparable. The current build has 475 validation pairs, and the format
+comparison uses its own 172-pair subset, identical in both views; nothing has
+been trained on them yet.
 
 ## Quick start
 
@@ -231,6 +253,11 @@ python3 ml/asm/build_dataset.py
 #    (resumable: a rerun continues where the previous one stopped)
 python3 ml/asm/gen_cases.py --split all --out ml/asm/dataset/cases.jsonl
 
+# 2b. the same programs as objdump -d sees them (~5 min with --jobs 8),
+#     then the subset that fits one token budget in both views
+python3 ml/asm/build_disasm.py --jobs 8
+python3 ml/asm/build_subset.py --cap 4096
+
 # 3. smoke test the training loop on 60 short pairs
 python3 ml/asm/train.py --limit 60 --epochs 3 --max-seq-len 1024 \
     --grad-accum 4 --tag smoke
@@ -238,6 +265,13 @@ python3 ml/asm/train.py --limit 60 --epochs 3 --max-seq-len 1024 \
 # 4. full run (the numbers in Results, ~2h15m on an RTX 3050)
 python3 ml/asm/train.py --epochs 3 --max-seq-len 2048 \
     --grad-accum 8 --tag night-20261022
+
+# 4b. format comparison: identical programs, identical split, one adapter per
+#     view of the code (the mixed file trains on both at once)
+python3 ml/asm/train.py --train ml/asm/dataset/train_common4096_listing.jsonl \
+    --epochs 1 --max-seq-len 4096 --grad-accum 8 --tag common4096-listing
+python3 ml/asm/train.py --train ml/asm/dataset/train_common4096_disasm.jsonl \
+    --epochs 1 --max-seq-len 4096 --grad-accum 8 --tag common4096-disasm
 
 # 5. evaluate on the validation split (`--val` can point at any JSONL of pairs,
 #    which is how the same 26-pair subset is compared across runs; results are
@@ -316,10 +350,12 @@ kind_picture/
       not the run
 - [x] Record the teacher model in every dataset pair, so runs can be balanced
       or filtered by teacher
-- [ ] Rotate the input format to disassembly (`objdump -d`) and compare three
-      adapters on identical programs: listings only, disassembly only, mixed
+- [x] Build the disassembly view of the corpus (`build_disasm.py`) and a
+      token-matched common subset of both views (`build_subset.py`)
+- [ ] Compare adapters on that subset — listings only, disassembly only, mixed
+      — on identical programs and an identical split
 - [ ] Line B: freestanding `_start` programs verified by `verifier.py`
-- [ ] Train on the rebuilt 12,665-pair split (the current adapter saw 2,579)
+- [ ] Train on the rebuilt 24,377-pair split (the current adapter saw 2,579)
 - [ ] A larger model on a two-GPU server
 - [ ] Inference CLI: listing in, verifiable C out
 
@@ -331,12 +367,20 @@ This is an early research prototype, and the README says so on purpose:
   compiled by gcc. It is not a general-purpose decompiler.
 - The input format is a compiler listing, not a disassembly. Real binaries
   produce `objdump -d` output with addresses, hex bytes and PLT operands, and
-  the model has never seen that format; the gap is unmeasured until the
-  disassembly round runs.
-- The corpus now has two teachers, and they are far from balanced: 12,887
-  pairs from `beam:cloud` against 40 from `deepseek-v4.1-flash:cloud`. The
-  `model` field makes the imbalance visible and fixable, but no rebalancing
-  has been applied yet.
+  the model has never seen that format. The disassembly corpus now exists, so
+  the gap is being measured on the model rather than argued about.
+- The disassembly view is lossy: two C programs that differ only in names or
+  formatting compile to the same bytes, which is 1,530 of 25,758 pairs. The
+  input carries less information than the listing, so part of any quality gap
+  may come from that and not from the unfamiliar rendering.
+- The disassembly is about twice as long in tokens, so a token budget cuts the
+  two corpora unevenly: at 4,096 tokens, 45.0% of disassembly pairs fit and
+  79.5% of listings do. The comparison therefore runs on the intersection —
+  3,876 programs — and says nothing about the long tail of either format.
+- The corpus has two teachers, now close to balanced in pairs (12,887 from
+  `beam:cloud`, 11,965 from `deepseek-v4.1-flash:cloud`), but nothing measures
+  them separately: it is unknown whether one writes better C than the other,
+  so "balanced" here means counts, not quality.
 - The current model is 0.6B parameters. The second full run puts 70.3% of
   unseen answers through the compiler and 27.1% through the differential test;
   the rest either fail to compile or disagree with the reference on at least
@@ -348,13 +392,12 @@ This is an early research prototype, and the README says so on purpose:
   they read nothing or print nothing. They are excluded from the score, which
   is right for measurement and wrong for the dataset: the model still trains on
   them.
-- Training skips pairs longer than `--max-seq-len` (2,048 tokens in the current
-  run) rather than truncating them: 2,770 of the 5,349 pairs in that split never
-  reached the last run. Long programs are underrepresented, and the adapter has
-  not seen the 12,665-pair rebuild.
-- The corpus is dominated by a single cloud model (`beam:cloud`, 12,887 of
-  12,927 pairs), so its style and mistakes are baked into the data. The 40
-  pairs from `deepseek-v4.1-flash:cloud` are too few to offset that.
+- Training skips pairs longer than `--max-seq-len` (2,048 tokens in the
+  reference run) rather than truncating them: 2,770 of the 5,349 pairs in that
+  split never reached it. At 4,096 tokens 54% of the disassembly corpus still
+  does not fit, so long programs stay underrepresented.
+- Both teachers are cloud models, so their style and their mistakes are baked
+  into the data; there is no local reference corpus to compare against.
 - Line B (freestanding assembly) is designed but not collected yet.
 
 ## Docs

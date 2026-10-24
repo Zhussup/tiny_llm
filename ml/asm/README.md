@@ -23,9 +23,16 @@ contradictory correct answers, which turns into label noise for a small model.
 ## Pipeline
 
 ```
-gen_c.py ──► raw_c/shard_*.jsonl ──► build_dataset.py ──► dataset/train.jsonl
-                                                          dataset/val.jsonl
-                                                               │
+gen_c.py ──► raw_c/shard_*.jsonl ──┬─► build_dataset.py ──► dataset/train.jsonl
+                                   │                        dataset/val.jsonl
+                                   └─► build_disasm.py ───► dataset/train_disasm.jsonl
+                                                            dataset/val_disasm.jsonl
+                                                                    │
+                    build_subset.py ◄───────────────────────────────┘
+                    (both views, one token budget)
+                          │
+                          └─► dataset/*_common<N>_{listing,disasm,mixed}.jsonl
+
 model answer (C) ──► difftest.py: original C vs predicted C ──► verdict
 ```
 
@@ -43,6 +50,15 @@ model answer (C) ──► difftest.py: original C vs predicted C ──► verd
 - `build_dataset.py` — turns raw shards into chat-format JSONL pairs
   (listing → original C), with leak stripping, deduplication and a
   train/val split.
+- `build_disasm.py` — the same records as `objdump -d` sees them: compiles the
+  stored C, links it, disassembles `.text` and keeps only the functions the
+  program itself defines (`nm --defined-only`). Writes
+  `dataset/train_disasm.jsonl` / `val_disasm.jsonl` with the same ids, split
+  and chat format, `d1-…` instead of `a1-…`.
+- `build_subset.py` — keeps the programs whose every sample fits one token
+  budget in both views, so adapters trained on listings and on disassembly can
+  be compared on identical programs. Writes `dataset/{train,val}_common<N>_
+  {listing,disasm,mixed}.jsonl`.
 - `gen_cases.py` — builds per-program differential probes: tries a pool of 46
   stdin inputs against each reference program, keeps up to six that it actually
   reacts to, writes them to `dataset/cases.jsonl`.
@@ -67,9 +83,12 @@ model answer (C) ──► difftest.py: original C vs predicted C ──► verd
 - `tests/` — self-tests for the verifier (`hello.s`, `echo.s`, `crash.s`,
   `infinite.s`).
 - `raw_c/` — output shards of `gen_c.py` (runtime data).
-- `dataset/` — built `train.jsonl`, `val.jsonl`, `stats.json`, the per-program
-  probes `cases.jsonl` / `cases_val.jsonl`, and the frozen validation snapshot
-  `val118.jsonl` that every number in this README was measured on (runtime data).
+- `dataset/` — built `train.jsonl`, `val.jsonl`, `stats.json`, their
+  disassembly counterparts `train_disasm.jsonl`, `val_disasm.jsonl`,
+  `stats_disasm.json`, the token-matched `*_common4096_*` subsets, the
+  per-program probes `cases.jsonl` / `cases_val.jsonl`, and the frozen
+  validation snapshot `val118.jsonl` that every number in this README was
+  measured on (runtime data).
 - `checkpoints/` — LoRA adapters and `train_state.json` (runtime data).
 - `eval_results/` — `predictions_*.jsonl` and `summary_*.json` per evaluation
   run: one row per validation pair, every answer with its compile and
@@ -133,7 +152,10 @@ Each sample is a chat record:
 }
 ```
 
-- The reference record produces **two samples** (`-O0` and `-O2`).
+- The reference record produces **two samples** (`-O0` and `-O2`). The
+  disassembly corpus follows the same format with `d1-` ids and
+  `dataset/train_disasm.jsonl`; only the user message and the system prompt
+  differ.
 - **Teacher provenance:** every sample carries the `model` that wrote its C,
   copied from the record in `raw_c/` (`"unknown"` for shards collected before
   the field existed). The collector reads its settings from `config.json`:
@@ -157,6 +179,63 @@ Each sample is a chat record:
 - Output files are written atomically (`.tmp` + `os.replace`), and a
   half-written last line in a shard being appended to right now is skipped,
   so rebuilding while collection is running is safe.
+
+## Disassembly view (`build_disasm.py`, `build_subset.py`)
+
+The listing is what a compiler prints; a real target is a binary, and its
+assembly comes out of `objdump -d`. `build_disasm.py` builds that second view
+of the same programs without collecting anything new: every record keeps its
+`c_source`, which is compiled again — this time into an executable — and
+disassembled.
+
+What the pipeline does per record, per optimization level:
+
+1. `gcc -std=c11 -fno-asynchronous-unwind-tables -O{0,2} -c` to get the
+   object file;
+2. `nm --defined-only prog.o` to collect the function names the program
+   defines (symbol types `T`/`t`);
+3. `gcc -no-pie -o prog.x prog.o -lm` to link — `-no-pie` keeps addresses in
+   the `0x401000` range that objdump output usually shows, `-lm` because some
+   answers use `math.h`, which compiles fine but fails to link without it;
+4. `objdump -d -j .text prog.x`, then every function block whose name is not
+   in the `nm` set is dropped.
+
+Step 4 matters: a linked binary also contains the C runtime — `_start`,
+`_init`, `frame_dummy`, `register_tm_clones`, `_dl_relocate_static_pie` — and
+those functions have nothing to do with the program. A hardcoded blocklist
+misses version-specific names (`_dl_relocate_static_pie` slipped through in the
+pilot), so the filter is derived from the source's own symbols.
+
+Nothing else is normalized. The output is exactly what objdump prints: address
+column, hex bytes, `<symbol@plt>` targets, RIP-relative comments. A normalized
+view would test a format nobody actually reads.
+
+Two consequences worth knowing:
+
+- **The view is lossy.** Names, indentation and `puts` versus `printf` do not
+  survive compilation, so two different (behaviorally identical) C programs can
+  produce the same disassembly. 1,530 of 25,758 pairs were such collisions;
+  the first target is kept and the count is `skipped_dup_conflict` in
+  `stats_disasm.json`.
+- **The view is twice as expensive in tokens.** Hex bytes and addresses
+  tokenize badly: the median pair is 4,475 tokens against 2,259 for the
+  listing, and 13.8% of disassembly pairs fit 2,048 tokens against 44.7% of
+  listings (45.0% / 79.5% at 4,096).
+
+Because of the second point, a comparison at a fixed `--max-seq-len` would
+measure format *and* volume at once. `build_subset.py` removes that
+confound: a program enters the subset only if it is present in both corpora
+with the same number of samples and every sample fits the cap, measured with
+the same chat template `train.py` uses. At `--cap 4096`: 3,876 programs, 7,680
+rows per view, 172 validation pairs. Three files per split — `listing`,
+`disasm`, `mixed` — so `train.py --train …` needs no change.
+
+```bash
+python3 build_disasm.py --jobs 8          # ~5 min, writes dataset/*_disasm*
+python3 build_disasm.py --limit 20 --jobs 4   # smoke test
+python3 build_subset.py --cap 4096        # writes dataset/*_common4096_*
+python3 build_subset.py --cap 2048 --dry-run
+```
 
 ## Differential testing (`difftest.py`)
 
@@ -285,12 +364,14 @@ the gain, and compile rate is not a proxy for quality.
        width="840">
 </picture>
 
-The last `build_dataset.py` run produced **12,665 train / 262 validation** pairs
-from 6,834 collected programs (`-O0` 6,487, `-O2` 6,440; 419 duplicates and 322
-compile failures excluded). Two teachers are in the mix and they are far from
-balanced: `beam:cloud` wrote 12,887 pairs, `deepseek-v4.1-flash:cloud` 40. The
-adapter above was trained on the earlier 2,579-pair subset of a 5,349-pair
-split, so the rebuild is not reflected in any number here yet.
+The last `build_dataset.py` run produced **24,377 train / 475 validation**
+listings from 13,065 collected programs (`-O0` 12,483, `-O2` 12,369; 908
+duplicates and 370 compile failures excluded), and `build_disasm.py` turned the
+same records into **23,647 / 463** disassembly pairs (1,648 duplicates, 1,530
+of them ambiguous, and 372 compile/link failures). Two teachers are in the mix
+and they are now close to balanced: `beam:cloud` wrote 12,887 pairs,
+`deepseek-v4.1-flash:cloud` 11,965. No adapter has been trained on this
+rebuild yet; the adapter above was trained on an earlier 2,579-pair subset.
 
 ## Usage
 

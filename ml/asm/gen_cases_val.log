@@ -1,0 +1,8 @@
+programs: 238, probe pool: 46, keep up to 6
+resume: 92 programs already in dataset/cases_val.jsonl, 146 to go
+  100/146 new programs (192/238 total)
+
+this run: processed 146, informative 135 (92.5%)
+probes per program (this run): {0: 11, 1: 11, 2: 14, 3: 14, 4: 7, 5: 3, 6: 86}
+total in dataset/cases_val.jsonl: 238/238 programs
+wrote dataset/cases_val.jsonl

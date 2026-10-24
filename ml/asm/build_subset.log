@@ -1,0 +1,38 @@
+train: 24377 listings, 23647 disassemblies
+train: 3876 common programs, 7680 rows per view
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/train_common4096_listing.jsonl (7680)
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/train_common4096_disasm.jsonl (7680)
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/train_common4096_mixed.jsonl (15360)
+val: 475 listings, 463 disassemblies
+val: 86 common programs, 172 rows per view
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/val_common4096_listing.jsonl (172)
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/val_common4096_disasm.jsonl (172)
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/val_common4096_mixed.jsonl (344)
+{
+  "cap": 4096,
+  "tokenizer": "Qwen/Qwen3-0.6B",
+  "splits": {
+    "train": {
+      "sources": 3876,
+      "listing_rows": 7680,
+      "disasm_rows": 7680,
+      "dropped": {
+        "listing_only": 237,
+        "disasm_only": 0,
+        "count_mismatch": 300,
+        "too_long": 7834
+      }
+    },
+    "val": {
+      "sources": 86,
+      "listing_rows": 172,
+      "disasm_rows": 172,
+      "dropped": {
+        "listing_only": 5,
+        "disasm_only": 0,
+        "count_mismatch": 3,
+        "too_long": 144
+      }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+records: 13065
+  250/13065 records, 488 samples
+  500/13065 records, 976 samples
+  750/13065 records, 1468 samples
+  1000/13065 records, 1962 samples
+  1250/13065 records, 2454 samples
+  1500/13065 records, 2940 samples
+  1750/13065 records, 3436 samples
+  2000/13065 records, 3932 samples
+  2250/13065 records, 4422 samples
+  2500/13065 records, 4914 samples
+  2750/13065 records, 5406 samples
+  3000/13065 records, 5890 samples
+  3250/13065 records, 6384 samples
+  3500/13065 records, 6870 samples
+  3750/13065 records, 7350 samples
+  4000/13065 records, 7836 samples
+  4250/13065 records, 8318 samples
+  4500/13065 records, 8800 samples
+  4750/13065 records, 9298 samples
+  5000/13065 records, 9776 samples
+  5250/13065 records, 10258 samples
+  5500/13065 records, 10748 samples
+  5750/13065 records, 11238 samples
+  6000/13065 records, 11730 samples
+  6250/13065 records, 12224 samples
+  6500/13065 records, 12714 samples
+  6750/13065 records, 13190 samples
+  7000/13065 records, 13674 samples
+  7250/13065 records, 14170 samples
+  7500/13065 records, 14664 samples
+  7750/13065 records, 15158 samples
+  8000/13065 records, 15658 samples
+  8250/13065 records, 16158 samples
+  8500/13065 records, 16656 samples
+  8750/13065 records, 17154 samples
+  9000/13065 records, 17654 samples
+  9250/13065 records, 18154 samples
+  9500/13065 records, 18654 samples
+  9750/13065 records, 19154 samples
+  10000/13065 records, 19654 samples
+  10250/13065 records, 20154 samples
+  10500/13065 records, 20654 samples
+  10750/13065 records, 21152 samples
+  11000/13065 records, 21650 samples
+  11250/13065 records, 22150 samples
+  11500/13065 records, 22648 samples
+  11750/13065 records, 23144 samples
+  12000/13065 records, 23638 samples
+  12250/13065 records, 24136 samples
+  12500/13065 records, 24630 samples
+  12750/13065 records, 25130 samples
+  13000/13065 records, 25628 samples
+{
+  "samples": 25758,
+  "skipped_not_compiled": 370,
+  "skipped_link": 2,
+  "skipped_dup": 1648,
+  "skipped_dup_conflict": 1530,
+  "skipped_c": 0,
+  "by_opt": {
+    "O0": 12879,
+    "O2": 12879
+  },
+  "by_model": {
+    "beam:cloud": 13304,
+    "deepseek-v4.1-flash:cloud": 12454
+  },
+  "train": 23647,
+  "val": 463
+}
+written: /home/zhus/Desktop/projects/ml/kind_picture/ml/asm/dataset/train_disasm.jsonl (23647), val_disasm.jsonl (463)
